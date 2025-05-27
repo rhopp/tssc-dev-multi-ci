@@ -1,6 +1,59 @@
 #!/bin/bash
 SCRIPTDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" > /dev/null 2>&1 && pwd)"
 
+# Manages the custom root CA for system-wide trust
+setup_custom_ca() {
+  local ca_file_path="/etc/pki/ca-trust/source/anchors/custom-provided-ca.crt"
+  local ca_env_var_name="CUSTOM_ROOT_CA"
+  local run_update_ca_trust=false
+
+  if [[ -n "${!ca_env_var_name:-}" ]]; then
+    local current_ca_content="${!ca_env_var_name}"
+    if [[ -f "$ca_file_path" ]]; then
+      local existing_ca_content
+      existing_ca_content=$(cat "$ca_file_path")
+      if [[ "$current_ca_content" != "$existing_ca_content" ]]; then
+        echo "INFO: Custom CA content differs or file exists with different content. Updating $ca_file_path." >&2
+        if ! (echo "${current_ca_content}" | sudo tee "$ca_file_path" > /dev/null); then
+            echo "ERROR: Failed to write custom CA to $ca_file_path. Permissions issue?" >&2
+            return 1
+        fi
+        run_update_ca_trust=true
+      fi
+    else
+      echo "INFO: Custom CA file $ca_file_path does not exist. Creating it." >&2
+      if ! (echo "${current_ca_content}" | sudo tee "$ca_file_path" > /dev/null); then
+        echo "ERROR: Failed to write custom CA to $ca_file_path. Permissions issue?" >&2
+        return 1
+      fi
+      run_update_ca_trust=true
+    fi
+  else
+    if [[ -f "$ca_file_path" ]]; then
+      echo "INFO: CUSTOM_ROOT_CA is not set. Removing existing custom CA file $ca_file_path." >&2
+      if ! sudo rm -f "$ca_file_path"; then
+        echo "ERROR: Failed to remove custom CA file $ca_file_path. Permissions issue?" >&2
+      fi
+      run_update_ca_trust=true
+    fi
+  fi
+
+  if [[ "$run_update_ca_trust" = true ]]; then
+    echo "INFO: Running update-ca-trust to apply CA changes." >&2
+    if ! sudo update-ca-trust; then
+      echo "ERROR: 'update-ca-trust' command failed." >&2
+      return 1
+    fi
+  fi
+  return 0
+}
+setup_custom_ca
+# Consider checking the return status:
+# if ! setup_custom_ca; then
+#   echo "ERROR: Failed to set up custom CA in $(basename "$0"). Exiting." >&2
+#   exit 1
+# fi
+
 if [ $# -ne 1 ]; then
     echo "Missing param, provide gitlab repo name"
     echo "Note: This script uses MY_GITLAB_TOKEN and MY_GITLAB_USER env vars"

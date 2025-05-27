@@ -186,3 +186,55 @@ hack/jenkins-set-secrets
 ```
 
 [rhtap-docs]: https://docs.redhat.com/en/documentation/red_hat_trusted_application_pipeline
+
+## Advanced Configuration
+
+### Custom Root Certificate Authority (CA)
+
+If your environment requires communication with services that use custom SSL certificates (e.g., internal Artifactory, container registries, Git servers signed by a private CA), you can provide a custom root CA certificate to be trusted by the scripts and tools executed within this repository's tasks.
+
+#### Environment Variable: `CUSTOM_ROOT_CA`
+
+*   **Purpose:** To provide the PEM-encoded content of the custom root CA certificate.
+*   **Expected Value:** The full string content of your root CA certificate in PEM format (including the `-----BEGIN CERTIFICATE-----` and `-----END CERTIFICATE-----` markers).
+
+#### Behavior
+
+When the `CUSTOM_ROOT_CA` environment variable is set and contains valid PEM data:
+1.  The certificate content is written to `/etc/pki/ca-trust/source/anchors/custom-provided-ca.crt` within the task's execution environment.
+2.  The `update-ca-trust` command is executed to update the system's list of trusted CAs.
+
+This makes the custom CA trusted system-wide within the execution environment, allowing tools like `curl`, `git`, `buildah`, `skopeo`, Go-based CLIs (e.g., `cosign`, `ec`, `gh`, `roxctl`), and Python scripts (using the default SSL context) to securely communicate with services signed by this CA.
+
+#### Prerequisites
+
+*   The execution environment (typically the Docker image defined in this repository's `Dockerfile`) must be based on a distribution that uses `update-ca-trust` (e.g., RHEL, Fedora, CentOS, or derivatives). It should have the `ca-certificates` package (or equivalent) installed.
+*   The scripts require sufficient permissions (e.g., via `sudo` as implemented in the scripts, or by running as root) to write to `/etc/pki/ca-trust/source/anchors/` and to execute `update-ca-trust`. This is generally expected to be configured in the CI runner environment or the base Docker image.
+
+#### Example
+
+You would typically set this environment variable in your CI/CD system's settings for the pipeline or tasks.
+
+Example value:
+```
+CUSTOM_ROOT_CA="-----BEGIN CERTIFICATE-----
+MIIDdzCCAl+gAwIBAgIJAP44xgN/MetKMA0GCSqGSIb3DQEBCwUAMFgxCzAJBgNV
+BAYTAlVTMRAwDgYDVQQIDAdBbGFibGFtYTEQMA4GA1UEBwwHSHVudHN2aWxsZTEP
+MA0GA1UECgwGVGVzdCBDQTEQMA4GA1UEAwwHdGVzdC5jYTAeFw0yMzA0MDUxOTMx
+MTVaFw0zMzA0MDIxOTMxMTVaMFgxCzAJBgNVBAYTAlVTMRAwDgYDVQQIDAdBbGFi
+YW1hMRAwDgYDVQQHDAdIdW50c3ZpbGxlMQ8wDQYDVQQKDAZUZXN0IENBMRAwDgYD
+VQQDDAd0ZXN0LmNhMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA05+P
+... (rest of certificate content) ...
+gFPznDAUAAtLgMCAwEAAaNQME4wHQYDVR0OBBYEFDxL3P8U2GZPb3gX1ZCSDMPM
+S88OMB8GA1UdIwQYMBaAFDxL3P8U2GZPb3gX1ZCSDMPMS88OMA8GA1UdEwEB/wQF
+MAMBAf8wDQYJKoZIhvcNAQELBQADggEBAK5tLzBfnjV/gYcIytfGh39UiiYRkLRM
+s0j3QHbR5fGq0cZTlS2kNH5zLhV9rA3tSzzuxf0nTDED0gVBDIF2LpUswzJnL9uH
+I1u4G5hXj0/1c7a7xqSMHR2LKAP3xSbSToun7M53T0fTUcZsbSUEijsMEEYYhA8a
+n3mBEuH0AUvQ7NBYhfn4LzHzsY+mSWpM2f5Vahl0uVwX5sOzfDxuBVuaywM1Q0A5
+Pz60HM8kIA8c2T7STmY9E17tYUN0gLqXgY+3Kk8rQdGq3gQjVfKbG9pXvLs3GThA
+C8fDBM7yo+wgLIZMgNHuU4uW8MqxN2VGOIVmLs6ZkuitdwYpsZ+h+GE=
+-----END CERTIFICATE-----"
+```
+(Note: The example certificate above is illustrative only.)
+
+If `CUSTOM_ROOT_CA` is not set or is empty, the scripts will attempt to remove any previously configured custom CA via this mechanism and update the trust store accordingly.

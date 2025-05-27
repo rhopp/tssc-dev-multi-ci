@@ -1,6 +1,74 @@
 #!/bin/bash
 SCRIPTDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" > /dev/null 2>&1 && pwd)"
 
+# Manages the custom root CA for system-wide trust
+setup_custom_ca() {
+  local ca_file_path="/etc/pki/ca-trust/source/anchors/custom-provided-ca.crt"
+  local ca_env_var_name="CUSTOM_ROOT_CA"
+  local run_update_ca_trust=false
+
+  if [[ -n "${!ca_env_var_name:-}" ]]; then
+    # CA content is provided
+    local current_ca_content="${!ca_env_var_name}"
+    if [[ -f "$ca_file_path" ]]; then
+      local existing_ca_content
+      existing_ca_content=$(cat "$ca_file_path")
+      if [[ "$current_ca_content" != "$existing_ca_content" ]]; then
+        echo "INFO: Custom CA content differs or file exists with different content. Updating $ca_file_path." >&2
+        # Deliberately using subshell for tee to handle potential permission errors gracefully if any part of the path doesn't exist initially for tee.
+        # The script should generally run with permissions to write to this path.
+        if ! (echo "${current_ca_content}" | sudo tee "$ca_file_path" > /dev/null); then
+            echo "ERROR: Failed to write custom CA to $ca_file_path. Permissions issue?" >&2
+            # Decide if this is a fatal error or if scripts can proceed without custom CA
+            return 1 # Or some other error handling
+        fi
+        run_update_ca_trust=true
+      else
+        # echo "DEBUG: Custom CA file $ca_file_path already exists with the correct content." >&2
+        : # No change needed, content is the same
+      fi
+    else
+      echo "INFO: Custom CA file $ca_file_path does not exist. Creating it." >&2
+      if ! (echo "${current_ca_content}" | sudo tee "$ca_file_path" > /dev/null); then
+        echo "ERROR: Failed to write custom CA to $ca_file_path. Permissions issue?" >&2
+        return 1 # Or some other error handling
+      fi
+      run_update_ca_trust=true
+    fi
+  else
+    # CA content is NOT provided
+    if [[ -f "$ca_file_path" ]]; then
+      echo "INFO: CUSTOM_ROOT_CA is not set. Removing existing custom CA file $ca_file_path." >&2
+      if ! sudo rm -f "$ca_file_path"; then
+        echo "ERROR: Failed to remove custom CA file $ca_file_path. Permissions issue?" >&2
+        # Non-fatal, but system trust might be stale if update-ca-trust doesn't run or CA is still present
+      fi
+      run_update_ca_trust=true
+    else
+      # echo "DEBUG: CUSTOM_ROOT_CA is not set and $ca_file_path does not exist. Nothing to do." >&2
+      : # No CA provided, and no old CA file to remove
+    fi
+  fi
+
+  if [[ "$run_update_ca_trust" = true ]]; then
+    echo "INFO: Running update-ca-trust to apply CA changes." >&2
+    if ! sudo update-ca-trust; then
+      echo "ERROR: 'update-ca-trust' command failed." >&2
+      # Decide if this is a fatal error
+      return 1 # Or some other error handling
+    fi
+  # else
+    # echo "DEBUG: No changes to custom CA, update-ca-trust not required." >&2
+  fi
+  return 0
+}
+setup_custom_ca
+# Consider checking the return status of setup_custom_ca if it can fail fatally
+# if ! setup_custom_ca; then
+#   echo "ERROR: Failed to set up custom CA. Exiting." >&2
+#   exit 1
+# fi
+
 # Vars for scripts
 # Generated patterns to convert from Tekton.
 
